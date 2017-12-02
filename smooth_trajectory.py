@@ -1,20 +1,25 @@
 #!/usr/bin/env python
 
-import ase,copy
+import ase,copy,argparse
 from ase.io import read,write
 from sys import argv
 import numpy as np
 from scipy.interpolate import UnivariateSpline
+from argparse import RawTextHelpFormatter
 import cube_tools
-import pdb
 
 class trajectory():
     def __init__(self,fname = None,cube = False, nInterp = 10):
         self.xyz = []
         self.cube = cube
-        self.xyz_data = True
+        self.xyz_file = False 
+        self.cube_file = False 
+        if fname[0][-3:] == 'xyz':
+            self.xyz_file = True
+        if fname[0][-4:] == 'cube':
+            self.cube_file = True
         if fname != None:
-            if cube:
+            if self.cube_file:
                 try:
                     self.cube_trajectory = [ cube_tools.cube(fin) for fin in fname]
                     [self.xyz.append(np.array(self.cube_trajectory[ind].atomsXYZ)) for ind in xrange(len(self.cube_trajectory))]
@@ -66,45 +71,73 @@ class trajectory():
     def interpolate_all(self):
         if self.cube:
             self.interpolate_cube()
-        if self.xyz_data:
-            self.interpolate_xyz()
+        self.interpolate_xyz()
         return None
                     
     
     def write_interpolated(self):
-        if self.cube:
+        if self.cube_file:
+            if self.cube:
+                for frame in xrange(self.nInterp):
+                    for x in xrange(self.cube_trajectory[0].NX):
+                        for y in xrange(self.cube_trajectory[0].NY):
+                            for z in xrange(self.cube_trajectory[0].NZ):
+                                self.cube_trajectory[0].data[x][y][z] = self.cube_interpolated[x][y][z][frame]
+                    self.cube_trajectory[0].atomsXYZ[:,0] = self.xyz_interpolated[0][:,frame] 
+                    self.cube_trajectory[0].atomsXYZ[:,1] = self.xyz_interpolated[1][:,frame] 
+                    self.cube_trajectory[0].atomsXYZ[:,2] = self.xyz_interpolated[2][:,frame] 
+                    self.cube_trajectory[0].write_cube('cube_linterp%03d.cube' % frame)
+            else:
+                for frame in xrange(self.nInterp):
+                    self.cube_trajectory[0].atomsXYZ[:,0] = self.xyz_interpolated[0][:,frame] 
+                    self.cube_trajectory[0].atomsXYZ[:,1] = self.xyz_interpolated[1][:,frame] 
+                    self.cube_trajectory[0].atomsXYZ[:,2] = self.xyz_interpolated[2][:,frame] 
+                    self.cube_trajectory[0].write_cube('cube_linterp%03d.cube' % frame)
+        if self.xyz_file:
             for frame in xrange(self.nInterp):
-                for x in xrange(self.cube_trajectory[0].NX):
-                    for y in xrange(self.cube_trajectory[0].NY):
-                        for z in xrange(self.cube_trajectory[0].NZ):
-                            self.cube_trajectory[0].data[x][y][z] = self.cube_interpolated[x][y][z][frame]
-                self.cube_trajectory[0].atomsXYZ[:,0] = self.xyz_interpolated[0][:,frame] 
-                self.cube_trajectory[0].atomsXYZ[:,1] = self.xyz_interpolated[1][:,frame] 
-                self.cube_trajectory[0].atomsXYZ[:,2] = self.xyz_interpolated[2][:,frame] 
-                self.cube_trajectory[0].write_cube('cube_linterp%03d.cube' % frame)
-#        elif self.xyz_data:
-#            for frame in xrange(self.nInterp):
-#                self.ase_trajectory[0].atomsXYZ[:,0] = self.xyz_interpolated[0][:,frame] 
-#                self.ase_trajectory[0].atomsXYZ[:,1] = self.xyz_interpolated[1][:,frame] 
-#                self.ase_trajectory[0].atomsXYZ[:,2] = self.xyz_interpolated[2][:,frame] 
-#                write('cube_linterp%03d.cube' % frame, self.ase_trajectory[0])
+                self.ase_trajectory[0].positions[:,0] = self.xyz_interpolated[0][:,frame] 
+                self.ase_trajectory[0].positions[:,1] = self.xyz_interpolated[1][:,frame] 
+                self.ase_trajectory[0].positions[:,2] = self.xyz_interpolated[2][:,frame] 
+                write('linterp%03d.xyz' % frame, self.ase_trajectory[0])
         return None
 
 
 def main():
-    nInterp = argv[1]
-    finp = argv[2:]
-    interpolated_trajectory = trajectory(finp,cube=True)
-    interpolated_trajectory.interpolate_all()
-    interpolated_trajectory.write_interpolated()
-#    all_cubes = combine_cubes(trajectory)
-#    distance = get_norm(trajectory)
-#    interpolated_cubes = interpolate_all(all_cubes,nInterp)
-#    xyz = interpolate_trajectory(distance,trajectory,nInterp)
-#    trajectory = write_trajectory(trajectory,xyz)
-#    if True:
-#        write_cubes(trajectory,interpolated_cubes,xyz,nInterp)
-#    return None 
+    parser = argparse.ArgumentParser(description="Interpolate between images in a trajectory.  \nWorks with .xyz and .cube files. \nPass the files as arguments in the order in which they appear in the trajectory. \nThe default is to interpolate so that the trajectory becomes 10 images. This behaviour can be controlled by command line options.\nCommand line option required to interpolate cube data\nMinimum of 3 files required as input to be able to interpolate!",formatter_class=RawTextHelpFormatter)
+
+    parser.add_argument("Files",help="Files used in program",nargs = '+')
+    parser.add_argument("-c","--cube",help="Interpolate cube data. May take a few minutes.",action = "store_true")
+    parser.add_argument("-n","--ninterp",help="Total number of images to interpolate to. This includes the files that are passed as arguments",nargs=1,type=int)
+
+
+    if len(argv) <= 2:
+        parser.print_help()
+
+    args = parser.parse_args()
+
+    if len(args.Files) < 3:
+        print 'Minimum of 3 images required to interpolate. Exiting now'
+        exit()
+
+    if args.cube:
+        if args.Files: 
+            if args.ninterp:
+                interpolated_trajectory = trajectory(args.Files,nInterp = int(args.ninterp[0]),cube=True)
+                interpolated_trajectory.interpolate_all()
+                interpolated_trajectory.write_interpolated()
+            else:
+                interpolated_trajectory = trajectory(args.Files,cube=True)
+                interpolated_trajectory.interpolate_all()
+                interpolated_trajectory.write_interpolated()
+    elif args.ninterp: 
+        interpolated_trajectory = trajectory(args.Files, nInterp = int(args.ninterp[0]))
+        interpolated_trajectory.interpolate_all()
+        interpolated_trajectory.write_interpolated()
+    else:
+        interpolated_trajectory = trajectory(args.Files)
+        interpolated_trajectory.interpolate_all()
+        interpolated_trajectory.write_interpolated()
+                
 
 if __name__ == '__main__':
     main()
